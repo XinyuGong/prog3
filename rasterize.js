@@ -42,11 +42,7 @@ var centerArray = [];
 var transArray = [];
 var models = [];
 
-class Model {
-    constructor(obj) {
-        
-    }
-}
+
 
 // ASSIGNMENT HELPER FUNCTIONS
 
