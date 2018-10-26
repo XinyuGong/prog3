@@ -9,6 +9,7 @@ const INPUT_SPHERES_URL = "https://ncsucgclass.github.io/prog2/spheres.json"; //
 var eye = new vec3.fromValues(0.5, 0.5, -0.5); // default eye position in world space
 var lookAt = new vec3.fromValues(0.0, 0.0, 1.0);
 var lookUp = new vec3.fromValues(0.0, 1.0, 0.0);
+var lightPos = new vec3.fromValues(-3, 1, -0.5);
 
 /* webgl globals */
 var gl = null; // the all powerful gl object. It's all here folks!
@@ -18,18 +19,16 @@ var mDiffuseLoc;
 var mSpecularLoc;
 var mWeightsLoc;
 var vertexNormalAttrib;
-var viewMatrix = mat4.create();
-var normalMatrix = mat4.create();
-var projectionMatrix = mat4.create();
 var lightLoc;
-var modelViewLoc;
-var normalMatrixLoc;
+var eyeLoc;
 var projectionLoc;
 var transLoc;
 var rotatLoc;
 var scaleLoc;
 var modeLoc;
 var nLoc;
+var viewMatLoc;
+var transMatLoc;
 var isHighlighting = false;
 var inHighlight = -1;
 var models = [];
@@ -182,7 +181,7 @@ function setupShaders() {
         varying vec3 normalInterp;
         varying vec3 vertPos;
 
-        uniform vec3 lightPos;
+        uniform vec3 lightPos, eye;
         uniform vec3 mAmbient, mDiffuse, mSpecular, mWeights;
         uniform float n;
         uniform int mode; // mode: 0 - phong; 1 - blinn phong
@@ -195,7 +194,7 @@ function setupShaders() {
             float specular = 0.0;
 
             if (lambertian > 0.0) {
-                vec3 viewDir = normalize(-vertPos);
+                vec3 viewDir = normalize(eye - vertPos);
 
                 if (mode == 0) { // phong:
                     vec3 reflectDir = reflect(-lightDir, normal);
@@ -207,7 +206,6 @@ function setupShaders() {
                     specular = pow(specAngle, n);
                 }
             }
-
             gl_FragColor = vec4(mWeights[0] * mAmbient + mWeights[1] * lambertian * mDiffuse + mWeights[2] * specular * mSpecular, 1.0);
         }
     `;
@@ -217,17 +215,15 @@ function setupShaders() {
         attribute vec3 vertexPosition;
         attribute vec3 vertexNormal;
 
-        uniform mat4 modelView, normalMat, projection, transMatrix, rotatMatrix, scaleMatrix;
+        uniform mat4 projection, viewMatrix, transMatrix;
 
         varying vec3 normalInterp;
         varying vec3 vertPos;
 
         void main(void) {
-            mat4 matrix = transMatrix * (rotatMatrix * scaleMatrix);
-            gl_Position = projection * modelView * (matrix * vec4(vertexPosition, 1.0));
-            vec4 vertPos4 = modelView * (matrix * vec4(vertexPosition, 1.0));
-            vertPos = vec3(vertPos4) / vertPos4.w;
-            normalInterp = vec3(normalMat * normalize(rotatMatrix * vec4(vertexNormal, 0.0)));
+            gl_Position = projection * viewMatrix * (transMatrix * vec4(vertexPosition, 1.0));
+            vertPos = vec3(transMatrix * vec4(vertexPosition, 1.0));
+            normalInterp = vec3(normalize(transMatrix * vec4(vertexNormal, 0.0)));
         }
     `;
     
@@ -249,6 +245,8 @@ function setupShaders() {
             throw "error during vertex shader compile: " + gl.getShaderInfoLog(vShader);  
             gl.deleteShader(vShader);
         } else { // no compile errors
+            gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+            gl.enable(gl.DEPTH_TEST);
             var shaderProgram = gl.createProgram(); // create the single shader program
             gl.attachShader(shaderProgram, fShader); // put frag shader in program
             gl.attachShader(shaderProgram, vShader); // put vertex shader in program
@@ -262,10 +260,10 @@ function setupShaders() {
                     gl.getAttribLocation(shaderProgram, "vertexPosition");
                 gl.enableVertexAttribArray(vertexPositionAttrib); // input to shader from array
                 
-                // projection
+                // projection and eye
                 projectionLoc = gl.getUniformLocation(shaderProgram, 'projection');
-                modelViewLoc = gl.getUniformLocation(shaderProgram, 'modelView');
-                normalMatrixLoc = gl.getUniformLocation(shaderProgram, 'normalMat');
+                eyeLoc = gl.getUniformLocation(shaderProgram, 'eye');
+                viewMatLoc = gl.getUniformLocation(shaderProgram, 'viewMatrix');
 
                 // color attributes
                 mAmbientLoc = gl.getUniformLocation(shaderProgram, 'mAmbient');
@@ -284,9 +282,7 @@ function setupShaders() {
                 gl.enableVertexAttribArray(vertexNormalAttrib);
 
                 // transformation
-                transLoc = gl.getUniformLocation(shaderProgram, 'transMatrix');
-                rotatLoc = gl.getUniformLocation(shaderProgram, 'rotatMatrix');
-                scaleLoc = gl.getUniformLocation(shaderProgram, 'scaleMatrix');
+                transMatLoc = gl.getUniformLocation(shaderProgram, 'transMatrix');
 
                 // light
                 lightLoc = gl.getUniformLocation(shaderProgram, 'lightPos');
@@ -312,14 +308,15 @@ function renderTriangles() {
         gl.bindBuffer(gl.ARRAY_BUFFER,model.vertexBuffer); // activate
         gl.vertexAttribPointer(vertexPositionAttrib,3,gl.FLOAT,false,0,0); // feed
 
-        // projection
-        mat4Perspective(projectionMatrix, 90, 1.0, 0.5, 1.5);
-        gl.uniformMatrix4fv(projectionLoc, false, projectionMatrix);
-        mat4LookAt(viewMatrix);
-        mat4.invert(normalMatrix, viewMatrix);
-        mat4.transpose(normalMatrix, normalMatrix);
-        gl.uniformMatrix4fv(modelViewLoc, false, viewMatrix);
-        gl.uniformMatrix4fv(normalMatrixLoc, false, normalMatrix);
+        // projection and eye
+        var projectionMat = new mat4.create();
+        var viewMat = new mat4.create();
+        var focal = new vec3.create();
+        vec3.add(focal, eye, lookAt);mat4.lookAt(viewMat, eye, focal, lookUp);
+        gl.uniformMatrix4fv(viewMatLoc, false, viewMat);
+        mat4.perspective(projectionMat, Math.PI/2, 1, 0.5, 2);
+        gl.uniformMatrix4fv(projectionLoc, false, projectionMat);
+        gl.uniform3fv(eyeLoc, eye);
 
         // color
         gl.uniform3fv(mAmbientLoc, model.ambient);
@@ -338,12 +335,14 @@ function renderTriangles() {
         gl.uniform1f(nLoc, model.n);
 
         // transformation
-        gl.uniformMatrix4fv(transLoc, false, model.transMat);
-        gl.uniformMatrix4fv(rotatLoc, false, model.rotatMat);
-        gl.uniformMatrix4fv(scaleLoc, false, model.scaleMat);
+        var transMat = mat4.create();
+        mat4.mul(transMat, model.scaleMat, transMat);
+        mat4.mul(transMat, model.rotatMat, transMat);
+        mat4.mul(transMat, model.transMat, transMat);
+        gl.uniformMatrix4fv(transMatLoc, false, transMat);
 
         // light
-        gl.uniform3fv(lightLoc, [-0.5, 0, 0]);
+        gl.uniform3fv(lightLoc, lightPos);
 
         // triangle buffer: activate and render
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,model.triangleBuffer); // activate
